@@ -10,6 +10,14 @@ from langchain.vectorstores import FAISS
 from langchain.chains.question_answering import load_qa_chain
 from langchain.llms import OpenAI
 from langchain.callbacks import get_openai_callback
+from sklearn.metrics.pairwise import cosine_similarity
+from sklearn.feature_extraction.text import TfidfVectorizer 
+import re
+
+def preprocess_text(text):
+    text = text.lower()
+    text = re.sub(r'[^\w\s]', '', text)  
+    return text
 
 # Sidebar contents
 with st.sidebar:
@@ -27,7 +35,9 @@ with st.sidebar:
 def main():
     load_dotenv()
     st.header("Chat PDF App")
-
+    
+    #os.environ['OPENAI_API_KEY'] = st.text_input("OpenAI API Key:", type="password")
+    
     if pdf := st.file_uploader("Upload your PDF", type="pdf"):
         pdf_reader = PdfReader(pdf)
 
@@ -73,15 +83,36 @@ def main():
 
         if query := st.text_input("Ask questions about your PDF file:"):
             docs = vector_store.similarity_search(query=query, k=3)
-            llm = OpenAI(temperature=0, model_name="gpt-3.5-turbo")
-            chain = load_qa_chain(llm=llm, chain_type="stuff")
-            with get_openai_callback() as cb:
-                response = chain.run(input_documents=docs, question=query)
-                print(cb)
-                st.write(response)
-        
+            print(docs)
+            # Calculate the relevancy score
+            user_message = preprocess_text(query)  # Preprocess the user message
+            document_texts = [doc.page_content for doc in docs]
+            document_texts.append(user_message)  
 
-        #st.write(chunks)
+            # Create TF-IDF vectorizer
+            vectorizer = TfidfVectorizer()
+            X = vectorizer.fit_transform(document_texts)
+
+            # Calculate cosine similarities
+            user_message_tfidf = X[-1]
+            document_tfidf = X[:-1]
+            cosine_similarities = cosine_similarity(user_message_tfidf, document_tfidf)[0]
+
+            # Calculate the relevancy score as the maximum cosine similarity
+            relevancy_score = max(cosine_similarities) * 100
+            st.write(f"Relevancy score: {relevancy_score:.2f}%")
+
+            # Check if the relevancy score is above a certain threshold
+            relevancy_threshold = 50  # You can adjust this threshold as needed
+            if relevancy_score >= relevancy_threshold:
+                llm = OpenAI(temperature=0, model_name="gpt-3.5-turbo")
+                chain = load_qa_chain(llm=llm, chain_type="stuff")
+                with get_openai_callback() as cb:
+                    response = chain.run(input_documents=docs, question=query)
+                    print(cb)
+                    st.write(response)
+            else:
+                st.write("Query is not relevant enough to fetch a response.")
 
 
 
